@@ -1,39 +1,88 @@
 # Network Protocols & Algorithms Laboratory
 
-This repository contains implementations of foundational network protocols and algorithms. It serves as a practical guide and reference for understanding key concepts in computer networking.
-
-The repository is structured into separate directories for each experiment, demonstrating specific protocols and error detection methods.
+This repository contains implementations of fundamental **Computer Networking protocols, error detection and correction techniques, routing algorithms, and socket programming concepts**. It serves as a practical guide and reference for understanding and implementing key concepts in computer networks.
 
 ## Contents
 
-### 1. OSI Model Fundamentals
+### 1. Implementation of Framing Protocol
 
-*   **EXP0**: An implementation or demonstration based on a simplified model of the Open Systems Interconnection (OSI) networking layers.
+This experiment demonstrates **framing techniques** used in the Data Link Layer to divide a continuous stream of data into manageable frames.
 
-### 2. Data Link Layer Mechanisms
+- **Byte Stuffing** – A character-oriented framing technique used to provide data transparency by adding special characters when required.
 
-These experiments explore functionalities within the Data Link Layer.
+### 2. Implementation of Error Detection Techniques
 
-*   **EXP1**: Implementation of **Byte Stuffing** (also known as character stuffing), a technique used for data transparency in framing.
-*   **EXP2**: Implementation of **Checksum**, a fundamental error-detection method used to verify data integrity.
-*   **EXP3**: Implementation of **2D Parity Bit** (Two-Dimensional Parity Check), an enhanced error-detection scheme capable of both detecting and correcting certain types of errors.
+This experiment focuses on techniques used to detect errors that may occur during data transmission.
 
-### 3. Routing Algorithms
+- **Checksum** – An error detection method used to verify the integrity of transmitted data.
+- **2D Parity Bit** – A two-dimensional parity checking technique that uses row and column parity bits to detect transmission errors.
 
-This section focuses on algorithms used for path determination in networks.
+### 3. Implementation of Error Correction Technique
 
-*   **EXP4**: Implementation of the **Bellman-Ford Algorithm**, a distance-vector routing algorithm used to calculate the shortest paths in a graph.
+This experiment demonstrates techniques used to **detect and correct errors** in transmitted data.
 
----
+- **2D Parity Check** – Uses row and column parity information to identify and correct certain single-bit errors.
 
-## Getting Started
+### 4. Implementation of Routing Algorithms
 
-Detailed instructions for compiling and running the code can be found within the individual `EXP` directories. Typically, a standard compiler for the relevant programming language is required.
+This experiment focuses on algorithms used to determine efficient paths between nodes in a network.
 
-## Future Additions
+- **Bellman-Ford Algorithm** – A distance-vector routing algorithm used to find the shortest paths from a source node to all other nodes in a weighted graph.
 
-This repository is a work-in-progress. Additional networking experiments and algorithms will be added in the future to cover a broader range of topics.
+### 5. Implementation of Client-Server Application Using TCP Socket
 
-## Contributing
+This experiment demonstrates **client-server communication using TCP sockets**.
 
-Feel free to fork this repository, submit pull requests with improvements, or open issues for any bugs discovered.
+- Establishes a reliable connection between the client and server.
+- Uses **TCP (Transmission Control Protocol)** for connection-oriented communication.
+- Demonstrates sending and receiving data between the client and server.
+
+### 6. Implementation of Iterative Server Using Socket Programming – UDP Socket
+
+This experiment demonstrates an **iterative server using UDP socket programming**.
+
+- Uses **UDP (User Datagram Protocol)** for connectionless communication.
+- The server processes one client request at a time.
+- Demonstrates communication using UDP sockets.
+
+### 7. Implementation of Concurrent Server Using Socket Programming – TCP Socket
+
+This experiment demonstrates a **concurrent server using TCP socket programming**.
+
+- Uses **TCP** for reliable, connection-oriented communication.
+- Allows the server to handle multiple clients concurrently.
+- Demonstrates concurrent client-server communication using socket programming.
+
+## Technologies Used
+
+- **C / C++**
+- **Socket Programming**
+- **TCP (Transmission Control Protocol)**
+- **UDP (User Datagram Protocol)**
+- **Computer Networking Algorithms**
+
+## Repository Structure
+
+```text
+Network-Protocols-Algorithms-Lab/
+│
+├── EXP1/
+│   └── Framing Protocol
+│
+├── EXP2/
+│   └── Error Detection Techniques
+│
+├── EXP3/
+│   └── Error Correction Technique
+│
+├── EXP4/
+│   └── Routing Algorithms
+│
+├── EXP5/
+│   └── TCP Client-Server Application
+│
+├── EXP6/
+│   └── Iterative Server - UDP
+│
+└── EXP7/
+    └── Concurrent Server - TCP
