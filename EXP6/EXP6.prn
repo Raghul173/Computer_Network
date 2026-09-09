@@ -1,0 +1,1372 @@
+                        EXP - 6, Implementation of Iterative programming using UDP socket
+
+24BCS173
+28/08/2026
+
+raghul@Raghul:~/SEM5/CN/EXP6/chat$ cat server.c
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+
+int main()
+{
+    int sockfd;
+    char buffer[1024], message[1024];
+
+    struct sockaddr_in serverAddr, clientAddr;
+    socklen_t addrLen;
+
+    struct sockaddr_in clients[10];
+    int clientCount = 0;
+
+    // 1. Create UDP socket
+    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+
+    if (sockfd < 0)
+    {
+        printf("Socket creation failed\n");
+        return 1;
+    }
+
+    memset(&serverAddr, 0, sizeof(serverAddr));
+
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(5000);
+    serverAddr.sin_addr.s_addr = INADDR_ANY;
+
+    // 2. Bind socket
+    if (bind(sockfd, (struct sockaddr *)&serverAddr,
+             sizeof(serverAddr)) < 0)
+    {
+        printf("Bind failed\n");
+        close(sockfd);
+        return 1;
+    }
+
+    printf("UDP Chat Server is running...\n");
+    printf("Waiting for clients...\n");
+
+    while (1)
+    {
+        addrLen = sizeof(clientAddr);
+
+        // 3. Receive message
+        int n = recvfrom(sockfd, buffer, sizeof(buffer) - 1, 0,
+                         (struct sockaddr *)&clientAddr, &addrLen);
+
+        if (n < 0)
+        {
+            printf("Receive failed\n");
+            break;
+        }
+
+        buffer[n] = '\0';
+
+        // Find whether this client is already registered
+        int clientIndex = -1;
+
+        for (int i = 0; i < clientCount; i++)
+        {
+            if (clients[i].sin_port == clientAddr.sin_port &&
+                clients[i].sin_addr.s_addr == clientAddr.sin_addr.s_addr)
+            {
+                clientIndex = i;
+                break;
+            }
+        }
+
+        // New client
+        if (clientIndex == -1)
+        {
+            clientIndex = clientCount;
+            clients[clientCount] = clientAddr;
+            clientCount++;
+
+            printf("Client%d connected.\n", clientIndex + 1);
+
+            // Send assigned client number
+            sprintf(message, "Client%d", clientIndex + 1);
+
+            sendto(sockfd, message, strlen(message), 0,
+                   (struct sockaddr *)&clientAddr, addrLen);
+
+            continue;
+        }
+
+        // Client sends exit
+        if (strcmp(buffer, "exit") == 0)
+        {
+            printf("Client%d disconnected.\n",
+                   clientIndex + 1);
+            continue;
+        }
+
+        // Display message
+        printf("Client%d: %s\n",
+               clientIndex + 1, buffer);
+
+        // Server reply
+        printf("Server reply to Client%d: ",
+               clientIndex + 1);
+
+        fgets(message, sizeof(message), stdin);
+        message[strcspn(message, "\n")] = '\0';
+
+        sendto(sockfd, message, strlen(message), 0,
+               (struct sockaddr *)&clientAddr, addrLen);
+
+        if (strcmp(message, "exit") == 0)
+        {
+            printf("Chat ended.\n");
+            break;
+        }
+    }
+
+    close(sockfd);
+
+    return 0;
+}
+
+raghul@Raghul:~/SEM5/CN/EXP6/chat$ cat client.c
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+
+int main()
+{
+    int sockfd;
+    char message[1024], buffer[1024];
+    char clientName[50];
+
+    struct sockaddr_in serverAddr;
+    socklen_t addrLen = sizeof(serverAddr);
+
+    // 1. Create UDP socket
+    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+
+    if (sockfd < 0)
+    {
+        printf("Socket creation failed\n");
+        return 1;
+    }
+
+    memset(&serverAddr, 0, sizeof(serverAddr));
+
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(5000);
+    serverAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+    // 2. Contact server
+    strcpy(message, "CONNECT");
+
+    sendto(sockfd, message, strlen(message), 0,
+           (struct sockaddr *)&serverAddr,
+           sizeof(serverAddr));
+
+    // Receive client number from server
+    int n = recvfrom(sockfd, buffer, sizeof(buffer) - 1, 0,
+                     (struct sockaddr *)&serverAddr,
+                     &addrLen);
+
+    buffer[n] = '\0';
+
+    strcpy(clientName, buffer);
+
+    printf("Connected to UDP Chat Server as %s.\n", clientName);
+    printf("Type 'exit' to quit.\n");
+
+    while (1)
+    {
+        // 3. Enter message
+        printf("%s: ", clientName);
+
+        fgets(message, sizeof(message), stdin);
+        message[strcspn(message, "\n")] = '\0';
+
+        // Send message
+        sendto(sockfd, message, strlen(message), 0,
+               (struct sockaddr *)&serverAddr,
+               sizeof(serverAddr));
+
+        if (strcmp(message, "exit") == 0)
+        {
+            break;
+        }
+
+        // 4. Receive server reply
+        n = recvfrom(sockfd, buffer, sizeof(buffer) - 1, 0,
+                     (struct sockaddr *)&serverAddr,
+                     &addrLen);
+
+        if (n < 0)
+        {
+            printf("Receive failed\n");
+            break;
+        }
+
+        buffer[n] = '\0';
+
+        if (strcmp(buffer, "exit") == 0)
+        {
+            printf("Server has ended the chat.\n");
+            break;
+        }
+
+        printf("Server: %s\n", buffer);
+    }
+
+    close(sockfd);
+
+    return 0;
+}
+
+
+raghul@Raghul:~/SEM5/CN/EXP6/dhcp$ cat server.c
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <time.h>
+
+#define BUFFER_SIZE 1024
+#define MAX_SUBNETS 10
+#define MAX_IPS 256
+
+int subnet_count;
+int ip1, ip2, ip3, ip4;
+
+int total_ips[MAX_SUBNETS];
+int used[MAX_SUBNETS][MAX_IPS];
+
+void process_setup(int sockfd, struct sockaddr_in clientAddr,
+                   socklen_t addrLen, char *message);
+
+void process_allocate(int sockfd, struct sockaddr_in clientAddr,
+                      socklen_t addrLen, char *message);
+
+int main()
+{
+    int sockfd;
+    char buffer[BUFFER_SIZE];
+
+    struct sockaddr_in serverAddr, clientAddr;
+    socklen_t addrLen;
+
+    srand(time(NULL));
+
+    /* Create UDP socket */
+    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+
+    if (sockfd < 0)
+    {
+        perror("Socket creation failed");
+        return 1;
+    }
+
+    memset(&serverAddr, 0, sizeof(serverAddr));
+
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(5000);
+    serverAddr.sin_addr.s_addr = INADDR_ANY;
+
+    /* Bind socket */
+    if (bind(sockfd,
+             (struct sockaddr *)&serverAddr,
+             sizeof(serverAddr)) < 0)
+    {
+        perror("Bind failed");
+        close(sockfd);
+        return 1;
+    }
+
+    printf("UDP Iterative DHCP Server is running...\n");
+
+    while (1)
+    {
+        int n;
+
+        addrLen = sizeof(clientAddr);
+
+        /* Receive message */
+        n = recvfrom(sockfd,
+                     buffer,
+                     sizeof(buffer) - 1,
+                     0,
+                     (struct sockaddr *)&clientAddr,
+                     &addrLen);
+
+        if (n < 0)
+        {
+            perror("Receive failed");
+            continue;
+        }
+
+        buffer[n] = '\0';
+
+        printf("\nClient: %s\n",
+               inet_ntoa(clientAddr.sin_addr));
+
+        /* SETUP request */
+        if (strncmp(buffer, "SETUP", 5) == 0)
+        {
+            process_setup(sockfd,
+                          clientAddr,
+                          addrLen,
+                          buffer);
+        }
+
+        /* ALLOCATE request */
+        else if (strncmp(buffer, "ALLOCATE", 8) == 0)
+        {
+            process_allocate(sockfd,
+                             clientAddr,
+                             addrLen,
+                             buffer);
+        }
+
+        /* EXIT request */
+        else if (strcmp(buffer, "EXIT") == 0)
+        {
+            char response[] =
+                "DHCP client disconnected.";
+
+            sendto(sockfd,
+                   response,
+                   strlen(response),
+                   0,
+                   (struct sockaddr *)&clientAddr,
+                   addrLen);
+
+            printf("Client disconnected\n");
+        }
+
+        else
+        {
+            char response[] =
+                "Invalid request.";
+
+            sendto(sockfd,
+                   response,
+                   strlen(response),
+                   0,
+                   (struct sockaddr *)&clientAddr,
+                   addrLen);
+        }
+    }
+
+    close(sockfd);
+
+    return 0;
+}
+
+
+/* -------------------------------------------------
+   SETUP FUNCTION
+   ------------------------------------------------- */
+
+void process_setup(int sockfd,
+                   struct sockaddr_in clientAddr,
+                   socklen_t addrLen,
+                   char *message)
+{
+    char response[BUFFER_SIZE];
+
+    int total;
+    int required_subnets;
+
+    int i, j;
+    int power = 0;
+    int power_value = 1;
+
+    int base;
+    int remainder;
+
+    /* Read input */
+    if (sscanf(message,
+               "SETUP %d %d",
+               &total,
+               &required_subnets) != 2)
+    {
+        strcpy(response,
+               "Invalid SETUP format.");
+    }
+
+    else if (required_subnets < 1 ||
+             required_subnets > MAX_SUBNETS)
+    {
+        sprintf(response,
+                "Invalid number of blocks (1-%d).",
+                MAX_SUBNETS);
+    }
+
+    else if (total <= 0)
+    {
+        strcpy(response,
+               "Invalid total number of IP addresses.");
+    }
+
+    else
+    {
+        /*
+         * Find the next power of 2.
+         *
+         * Example:
+         * 10  -> 16  -> 2^4
+         * 50  -> 64  -> 2^6
+         * 100 -> 128 -> 2^7
+         */
+
+        while (power_value < total)
+        {
+            power_value = power_value * 2;
+            power++;
+        }
+
+        /*
+         * Maximum supported IP addresses
+         */
+        if (power_value > MAX_IPS)
+        {
+            strcpy(response,
+                   "Number of IP addresses exceeds maximum 256.");
+        }
+
+        else
+        {
+            subnet_count = required_subnets;
+
+            /*
+             * Generate random network block
+             */
+            ip1 = 192;
+            ip2 = 168;
+            ip3 = 1 + rand() % 254;
+            ip4 = 0;
+
+            /*
+             * Divide power-of-2 IP block
+             * among the requested blocks.
+             */
+            base = power_value / subnet_count;
+            remainder = power_value % subnet_count;
+
+            sprintf(response,
+                    "DHCP Server Setup\n\n"
+                    "Requested IP Addresses: %d\n"
+                    "Using nearest power of 2: 2^%d = %d\n"
+                    "Random IP Block: %d.%d.%d.%d\n"
+                    "Total IP Addresses Used: %d\n"
+                    "Number of Blocks: %d\n\n",
+                    total,
+                    power,
+                    power_value,
+                    ip1,
+                    ip2,
+                    ip3,
+                    ip4,
+                    power_value,
+                    subnet_count);
+
+            /*
+             * Start address of first block
+             */
+            int current_ip_start = 1;
+
+            for (i = 0; i < subnet_count; i++)
+            {
+                /*
+                 * Divide addresses among blocks.
+                 */
+                total_ips[i] = base;
+
+                if (i < remainder)
+                {
+                    total_ips[i]++;
+                }
+
+                /*
+                 * Calculate end address
+                 */
+                int end_addr =
+                    current_ip_start +
+                    total_ips[i] - 1;
+
+                /*
+                 * Reset used array
+                 */
+                for (j = 0; j < MAX_IPS; j++)
+                {
+                    used[i][j] = 0;
+                }
+
+                /*
+                 * Display block information
+                 */
+                char temp[250];
+
+                sprintf(temp,
+                        "Block %d:\n"
+                        "Start Address: %d.%d.%d.%d\n"
+                        "End Address: %d.%d.%d.%d\n"
+                        "Available IP Addresses: %d\n\n",
+
+                        i + 1,
+
+                        ip1,
+                        ip2,
+                        ip3,
+                        current_ip_start,
+
+                        ip1,
+                        ip2,
+                        ip3,
+                        end_addr,
+
+                        total_ips[i]);
+
+                strcat(response, temp);
+
+                /*
+                 * Move to next block
+                 */
+                current_ip_start += total_ips[i];
+            }
+        }
+    }
+
+    printf("%s", response);
+
+    sendto(sockfd,
+           response,
+           strlen(response),
+           0,
+           (struct sockaddr *)&clientAddr,
+           addrLen);
+}
+
+
+/* -------------------------------------------------
+   ALLOCATE FUNCTION
+   ------------------------------------------------- */
+
+void process_allocate(int sockfd,
+                      struct sockaddr_in clientAddr,
+                      socklen_t addrLen,
+                      char *message)
+{
+    char response[BUFFER_SIZE];
+
+    int subnet;
+    int required;
+
+    int i;
+    int count = 0;
+
+    if (sscanf(message,
+               "ALLOCATE %d %d",
+               &subnet,
+               &required) != 2)
+    {
+        strcpy(response,
+               "Invalid ALLOCATE format.");
+    }
+
+    else if (subnet < 1 ||
+             subnet > subnet_count)
+    {
+        sprintf(response,
+                "Invalid block number (1-%d).",
+                subnet_count);
+    }
+
+    else if (required <= 0)
+    {
+        strcpy(response,
+               "Invalid number of IP addresses requested.");
+    }
+
+    else
+    {
+        int subnet_idx = subnet - 1;
+
+        if (required > total_ips[subnet_idx])
+        {
+            sprintf(response,
+                    "Not enough IP addresses available "
+                    "in this block. Only %d left.",
+                    total_ips[subnet_idx]);
+        }
+
+        else
+        {
+            strcpy(response,
+                   "IP addresses allotted successfully:\n\n");
+
+            /*
+             * Calculate starting IP of selected block
+             */
+            int start_ip = 1;
+
+            int k;
+
+            for (k = 0; k < subnet_idx; k++)
+            {
+                start_ip += total_ips[k];
+            }
+
+            /*
+             * Allocate IP addresses
+             */
+            for (i = 0;
+                 i < MAX_IPS && count < required;
+                 i++)
+            {
+                if (used[subnet_idx][i] == 0)
+                {
+                    char temp[50];
+
+                    used[subnet_idx][i] = 1;
+
+                    sprintf(temp,
+                            "%d.%d.%d.%d\n",
+                            ip1,
+                            ip2,
+                            ip3,
+                            start_ip + i);
+
+                    strcat(response, temp);
+
+                    count++;
+                }
+            }
+
+            /*
+             * Update remaining IP addresses
+             */
+            total_ips[subnet_idx] -= count;
+        }
+    }
+
+    printf("%s\n", response);
+
+    sendto(sockfd,
+           response,
+           strlen(response),
+           0,
+           (struct sockaddr *)&clientAddr,
+           addrLen);
+}
+raghul@Raghul:~/SEM5/CN/EXP6/dhcp$ cat client.c
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+
+#define BUFFER_SIZE 1024
+#define SERVER_PORT 5000
+#define SERVER_IP "127.0.0.1"
+
+
+/* -------------------------------------------------
+   Integer Input Function
+   ------------------------------------------------- */
+
+int get_int_input(const char *prompt)
+{
+    int value;
+    char line[100];
+
+    while (1)
+    {
+        printf("%s", prompt);
+
+        if (fgets(line,
+                  sizeof(line),
+                  stdin) == NULL)
+        {
+            printf("\nExiting due to input stream closure.\n");
+            exit(0);
+        }
+
+        if (sscanf(line, "%d", &value) == 1)
+        {
+            return value;
+        }
+
+        printf("Invalid input. Please enter a valid integer.\n");
+    }
+}
+
+
+/* -------------------------------------------------
+   MAIN
+   ------------------------------------------------- */
+
+int main()
+{
+    int sockfd;
+
+    char message[BUFFER_SIZE];
+    char buffer[BUFFER_SIZE];
+
+    struct sockaddr_in serverAddr;
+
+    socklen_t addrLen =
+        sizeof(serverAddr);
+
+    /* Create UDP socket */
+    sockfd = socket(AF_INET,
+                    SOCK_DGRAM,
+                    0);
+
+    if (sockfd < 0)
+    {
+        perror("Socket creation failed");
+        return 1;
+    }
+
+    memset(&serverAddr,
+           0,
+           sizeof(serverAddr));
+
+    serverAddr.sin_family =
+        AF_INET;
+
+    serverAddr.sin_port =
+        htons(SERVER_PORT);
+
+    serverAddr.sin_addr.s_addr =
+        inet_addr(SERVER_IP);
+
+
+    printf("--- DHCP Client (Iterative) ---\n");
+
+    printf("Connecting to DHCP Server at %s:%d\n\n",
+           SERVER_IP,
+           SERVER_PORT);
+
+
+    /* -------------------------------------------------
+       PHASE 1 : SETUP
+       ------------------------------------------------- */
+
+    int total =
+        get_int_input(
+            "Enter total number of IP addresses: ");
+
+    int subnets =
+        get_int_input(
+            "Enter number of blocks: ");
+
+
+    /*
+     * Send SETUP request
+     */
+    sprintf(message,
+            "SETUP %d %d",
+            total,
+            subnets);
+
+
+    if (sendto(sockfd,
+               message,
+               strlen(message),
+               0,
+               (struct sockaddr *)&serverAddr,
+               sizeof(serverAddr)) < 0)
+    {
+        perror("Sendto failed (SETUP)");
+
+        close(sockfd);
+
+        return 1;
+    }
+
+
+    /*
+     * Receive SETUP response
+     */
+    int n =
+        recvfrom(sockfd,
+                 buffer,
+                 BUFFER_SIZE - 1,
+                 0,
+                 (struct sockaddr *)&serverAddr,
+                 &addrLen);
+
+
+    if (n < 0)
+    {
+        perror("Receive failed (SETUP)");
+
+        close(sockfd);
+
+        return 1;
+    }
+
+
+    buffer[n] = '\0';
+
+
+    printf("\n--- Server Response (SETUP) ---\n");
+
+    printf("%s\n",
+           buffer);
+
+
+    /* -------------------------------------------------
+       PHASE 2 : ALLOCATION
+       ------------------------------------------------- */
+
+    while (1)
+    {
+        printf("----------------------------\n");
+
+        int block =
+            get_int_input(
+                "Enter block number (0 to exit): ");
+
+
+        /*
+         * EXIT
+         */
+        if (block == 0)
+        {
+            strcpy(message,
+                   "EXIT");
+
+            printf("Sending EXIT message...\n");
+
+
+            sendto(sockfd,
+                   message,
+                   strlen(message),
+                   0,
+                   (struct sockaddr *)&serverAddr,
+                   sizeof(serverAddr));
+
+
+            /*
+             * Receive server confirmation
+             */
+            n =
+                recvfrom(sockfd,
+                         buffer,
+                         BUFFER_SIZE - 1,
+                         0,
+                         (struct sockaddr *)&serverAddr,
+                         &addrLen);
+
+
+            if (n >= 0)
+            {
+                buffer[n] = '\0';
+
+                printf("Server Disconnect Msg: %s\n",
+                       buffer);
+            }
+
+            break;
+        }
+
+
+        /*
+         * Number of IPs required
+         */
+        int required =
+            get_int_input(
+                "Enter number of IP addresses to allot: ");
+
+
+        /*
+         * Send ALLOCATE request
+         */
+        sprintf(message,
+                "ALLOCATE %d %d",
+                block,
+                required);
+
+
+        if (sendto(sockfd,
+                   message,
+                   strlen(message),
+                   0,
+                   (struct sockaddr *)&serverAddr,
+                   sizeof(serverAddr)) < 0)
+        {
+            perror("Sendto failed (ALLOCATE)");
+
+            continue;
+        }
+
+
+        /*
+         * Receive allocation response
+         */
+        n =
+            recvfrom(sockfd,
+                     buffer,
+                     BUFFER_SIZE - 1,
+                     0,
+                     (struct sockaddr *)&serverAddr,
+                     &addrLen);
+
+
+        if (n < 0)
+        {
+            perror("Receive failed (ALLOCATE)");
+
+            continue;
+        }
+
+
+        buffer[n] = '\0';
+
+
+        printf("\n--- Server Response (ALLOCATE) ---\n");
+
+        printf("%s\n",
+               buffer);
+    }
+
+
+    /* Close socket */
+    close(sockfd);
+
+    printf("Client socket closed. Goodbye.\n");
+
+    return 0;
+}
+
+
+raghul@Raghul:~/SEM5/CN/EXP6/dns$ cat server.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <signal.h>
+#include <sys/wait.h>
+#include <errno.h>
+
+#define TABLE_SIZE 10
+#define DB_FILE "dns_db.txt"
+#define MAX_LEN 100
+
+// --- Structures ---
+
+struct HashNode {
+    char domain[MAX_LEN];
+    char ip[MAX_LEN];
+    struct HashNode *next;
+};
+
+// --- Global Variables ---
+struct HashNode *hashTable[TABLE_SIZE];
+int server_sockfd; // Listener socket FD
+pid_t child_pid;   // PID of the DNS child process
+
+// --- Hash Table Functions ---
+
+// Simple djb2-like hash function
+unsigned int hash(const char *str) {
+    unsigned int hashValue = 0;
+    while (*str) {
+        hashValue = (hashValue * 31) + *str;
+        str++;
+    }
+    return hashValue % TABLE_SIZE;
+}
+
+// Free all memory in the hash table
+void freeTable() {
+    for (int i = 0; i < TABLE_SIZE; i++) {
+        struct HashNode *current = hashTable[i];
+        while (current != NULL) {
+            struct HashNode *temp = current;
+            current = current->next;
+            free(temp);
+        }
+        hashTable[i] = NULL;
+    }
+}
+
+// Insert new or update existing domain
+void insert_or_update(const char *domain, const char *ip) {
+    unsigned int slot = hash(domain);
+    struct HashNode *current = hashTable[slot];
+
+    // Check if exists, update if found
+    while (current != NULL) {
+        if (strcmp(current->domain, domain) == 0) {
+            strcpy(current->ip, ip);
+            return;
+        }
+        current = current->next;
+    }
+
+    // Allocate and insert new node
+    struct HashNode *newNode = (struct HashNode *)malloc(sizeof(struct HashNode));
+    if (!newNode) {
+        perror("Memory allocation failed");
+        return;
+    }
+    strcpy(newNode->domain, domain);
+    strcpy(newNode->ip, ip);
+    newNode->next = hashTable[slot];
+    hashTable[slot] = newNode;
+}
+
+// Delete a domain from hash table
+int delete_domain(const char *domain) {
+    unsigned int slot = hash(domain);
+    struct HashNode *current = hashTable[slot];
+    struct HashNode *prev = NULL;
+
+    while (current != NULL) {
+        if (strcmp(current->domain, domain) == 0) {
+            if (prev == NULL) {
+                hashTable[slot] = current->next;
+            } else {
+                prev->next = current->next;
+            }
+            free(current);
+            return 1; // Success
+        }
+        prev = current;
+        current = current->next;
+    }
+    return 0; // Not found
+}
+
+// Lookup IP for a domain
+const char* search(const char *domain) {
+    unsigned int slot = hash(domain);
+    struct HashNode *current = hashTable[slot];
+    while (current != NULL) {
+        if (strcmp(current->domain, domain) == 0) {
+            return current->ip;
+        }
+        current = current->next;
+    }
+    return NULL; // Not found
+}
+
+// --- Database Persistence (File I/O) ---
+
+// Load data from text file into memory
+void loadDatabase() {
+    freeTable(); // Clear current memory
+    FILE *file = fopen(DB_FILE, "r");
+
+    if (!file) {
+        // If file doesn't exist, create it
+        file = fopen(DB_FILE, "w");
+        if (file) fclose(file);
+        return;
+    }
+
+    char domain[MAX_LEN], ip[MAX_LEN];
+    int count = 0;
+    // Format: domain_name ip_address
+    while (fscanf(file, "%s %s", domain, ip) != EOF) {
+        insert_or_update(domain, ip);
+        count++;
+    }
+    fclose(file);
+    // printf("[Debug] Loaded %d records from DB.\n", count); // Optional debug
+}
+
+// Save current memory hash table to text file
+void saveDatabase() {
+    FILE *file = fopen(DB_FILE, "w");
+    if (!file) {
+        perror("Error opening DB file for saving");
+        return;
+    }
+
+    for (int i = 0; i < TABLE_SIZE; i++) {
+        struct HashNode *current = hashTable[i];
+        while (current != NULL) {
+            fprintf(file, "%s %s\n", current->domain, current->ip);
+            current = current->next;
+        }
+    }
+    fclose(file);
+}
+
+// Pretty print records to console
+void displayDatabase() {
+    printf("\n--- Current DNS Records ---\n");
+    printf("%-30s | %s\n", "Domain Name", "IP Address");
+    printf("-------------------------------------------\n");
+    int count = 0;
+    for (int i = 0; i < TABLE_SIZE; i++) {
+        struct HashNode *current = hashTable[i];
+        while (current != NULL) {
+            printf("%-30s | %s\n", current->domain, current->ip);
+            current = current->next;
+            count++;
+        }
+    }
+    printf("-------------------------------------------\n");
+    printf("Total records: %d\n\n", count);
+}
+
+// --- Child Process: DNS Listener ---
+
+// Signal handler allows child to refresh data instantly when parent updates file
+void sigusr1_handler(int sig) {
+    loadDatabase();
+    // printf("[Child] Database reloaded via signal notification.\n");
+}
+
+void dns_server_process() {
+    // 1. Setup Signal Handler for DB reloads
+    signal(SIGUSR1, sigusr1_handler);
+
+    // 2. Initial Load
+    loadDatabase();
+
+    struct sockaddr_in serverAddr, clientAddr;
+    socklen_t addrLen = sizeof(clientAddr);
+    char buffer[1024];
+
+    // 3. Create Socket
+    server_sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (server_sockfd < 0) {
+        perror("[Child] Socket creation failed");
+        exit(1);
+    }
+
+    memset(&serverAddr, 0, sizeof(serverAddr));
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(5000);
+    serverAddr.sin_addr.s_addr = INADDR_ANY;
+
+    // 4. Bind
+    if (bind(server_sockfd, (struct sockaddr *)&serverAddr, sizeof(serverAddr)) < 0) {
+        perror("[Child] Bind failed");
+        close(server_sockfd);
+        exit(1);
+    }
+
+    printf("[Child] DNS Listener started on port 5000 (PID: %d)\n", getpid());
+
+    // 5. Listen Loop
+    while (1) {
+        memset(buffer, 0, sizeof(buffer));
+        int n = recvfrom(server_sockfd, buffer, sizeof(buffer) - 1, 0, (struct sockaddr *)&clientAddr, &addrLen);
+        if (n < 0) continue;
+
+        // Clean string input
+        buffer[strcspn(buffer, "\r\n")] = 0;
+        // printf("[Child] Query for: %s\n", buffer); // Optional debug
+
+        // Lookup
+        const char *found_ip = search(buffer);
+        char response[1024];
+
+        if (found_ip != NULL) {
+            strcpy(response, found_ip);
+        } else {
+            strcpy(response, "Error: Domain not found");
+        }
+
+        // Send Response
+        sendto(server_sockfd, response, strlen(response), 0, (struct sockaddr *)&clientAddr, addrLen);
+    }
+}
+
+// --- Parent Process: Admin Console ---
+
+// Cleanup on exit
+void sigint_handler(int sig) {
+    printf("\n[Parent] Shutting down server...\n");
+    if (child_pid > 0) {
+        kill(child_pid, SIGKILL); // Terminate child
+        wait(NULL); // Wait for child to exit
+    }
+    close(server_sockfd);
+    printf("[Parent] Server stopped cleanly.\n");
+    exit(0);
+}
+
+int main() {
+    // 1. Handle Ctrl+C
+    signal(SIGINT, sigint_handler);
+
+    // Initialize Hash Table memory to NULL
+    for(int i=0; i<TABLE_SIZE; i++) hashTable[i] = NULL;
+
+    // 2. Fork processes
+    child_pid = fork();
+
+    if (child_pid < 0) {
+        perror("Fork failed");
+        exit(1);
+    }
+
+    if (child_pid == 0) {
+        // --- Child Executes ---
+        dns_server_process();
+    } else {
+        // --- Parent Executes ---
+        int choice;
+        char domain[MAX_LEN], ip[MAX_LEN];
+
+        printf("\n========================================\n");
+        printf("   UDP DNS Server & Admin Console\n");
+        printf("   Parent PID: %d | Child PID: %d\n", getpid(), child_pid);
+        printf("========================================\n");
+
+        while (1) {
+            printf("\n1. Display Records\n");
+            printf("2. Add/Update Record\n");
+            printf("3. Delete Record\n");
+            printf("4. Exit and Save\n");
+            printf("Enter choice: ");
+
+            if (scanf("%d", &choice) != 1) {
+                scanf("%*s"); // Clear bad input
+                continue;
+            }
+            getchar(); // Consume newline
+
+            switch (choice) {
+                case 1:
+                    // Parent reloads just to be safe before displaying
+                    loadDatabase();
+                    displayDatabase();
+                    break;
+                case 2:
+                    printf("Enter domain name: ");
+                    fgets(domain, MAX_LEN, stdin);
+                    domain[strcspn(domain, "\r\n")] = 0;
+                    if(strlen(domain) == 0) { printf("Domain cannot be empty.\n"); break;}
+
+                    printf("Enter IP address: ");
+                    fgets(ip, MAX_LEN, stdin);
+                    ip[strcspn(ip, "\r\n")] = 0;
+                    if(strlen(ip) == 0) { printf("IP cannot be empty.\n"); break;}
+
+                    insert_or_update(domain, ip);
+                    saveDatabase();
+
+                    // CRITICAL: Signal child to reload file immediately
+                    kill(child_pid, SIGUSR1);
+                    printf("Record added/updated and DNS process notified.\n");
+                    break;
+                case 3:
+                    printf("Enter domain to delete: ");
+                    fgets(domain, MAX_LEN, stdin);
+                    domain[strcspn(domain, "\r\n")] = 0;
+
+                    if (delete_domain(domain)) {
+                        saveDatabase();
+                        // CRITICAL: Signal child to reload file immediately
+                        kill(child_pid, SIGUSR1);
+                        printf("Record deleted and DNS process notified.\n");
+                    } else {
+                        printf("Domain not found in database.\n");
+                    }
+                    break;
+                case 4:
+                    sigint_handler(SIGINT); // Trigger cleanup
+                    break;
+                default:
+                    printf("Invalid choice.\n");
+            }
+        }
+    }
+
+    return 0;
+}
+raghul@Raghul:~/SEM5/CN/EXP6/dns$ cat client.c
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+
+int main() {
+    int sockfd, choice;
+    char domain[1024], buffer[1024];
+    struct sockaddr_in serverAddr;
+    socklen_t addrLen = sizeof(serverAddr);
+
+    // 1. Create UDP socket
+    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sockfd < 0) {
+        perror("Socket creation failed");
+        return 1;
+    }
+
+    memset(&serverAddr, 0, sizeof(serverAddr));
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(5000);
+    serverAddr.sin_addr.s_addr = inet_addr("127.0.0.1"); // Localhost
+
+    printf("UDP DNS Client initialized.\n");
+
+    while (1) {
+        printf("\n=== Client Menu ===\n");
+        printf("1. Look up Domain Name\n");
+        printf("2. Exit\n");
+        printf("Enter choice: ");
+
+        if (scanf("%d", &choice) != 1) {
+            break; // Exit on non-numeric input
+        }
+        getchar(); // consume newline
+
+        if (choice == 2) {
+            break;
+        } else if (choice == 1) {
+            // Enter website name
+            printf("Enter domain name (e.g., google.com): ");
+            fgets(domain, sizeof(domain), stdin);
+            domain[strcspn(domain, "\r\n")] = '\0'; // Strip newline
+
+            if (strlen(domain) == 0) continue;
+
+            // 2. Send query to DNS server
+            sendto(sockfd, domain, strlen(domain), 0, (struct sockaddr *)&serverAddr, sizeof(serverAddr));
+
+            // 3. Receive response (IP address) from DNS server
+            // Added a simple buffer clean before receiving
+            memset(buffer, 0, sizeof(buffer));
+            int n = recvfrom(sockfd, buffer, sizeof(buffer) - 1, 0, (struct sockaddr *)&serverAddr, &addrLen);
+
+            if (n < 0) {
+                perror("Receive failed");
+                continue;
+            }
+
+            buffer[n] = '\0'; // Null terminate
+
+            // Handle potential empty response visually
+            if (strlen(buffer) == 0) {
+                 printf("Resolved IP Address: <Server returned empty response>\n");
+            } else {
+                 printf("Resolved IP Address: %s\n", buffer);
+            }
+        } else {
+            printf("Invalid choice. Please enter 1 or 2.\n");
+        }
+    }
+
+    close(sockfd);
+    printf("Client exited.\n");
+    return 0;
+}
