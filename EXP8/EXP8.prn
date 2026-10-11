@@ -1,0 +1,734 @@
+                                EXP - 8, Sliding Window Protocol
+
+11/09/2026
+24BCS173
+
+Question 1 - Stop and Wait
+
+raghul@Raghul:~/SEM5/CN/EXP8$ cat cirrecv.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+
+#define PORT 8085
+#define BUFFER_SIZE 1024
+
+struct Frame {
+    int seq_no;
+    int ack_no;
+    int command; // 0: Normal, 2: Simulate Drop
+    char data[BUFFER_SIZE];
+};
+
+int main() {
+    int sockfd;
+    struct sockaddr_in servaddr, cliaddr;
+    socklen_t len;
+    struct Frame recv_frame, send_frame;
+    int expected_seq = 0;
+
+    if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+        perror("Socket creation failed");
+        exit(EXIT_FAILURE);
+    }
+
+    memset(&servaddr, 0, sizeof(servaddr));
+    memset(&cliaddr, 0, sizeof(cliaddr));
+    servaddr.sin_family = AF_INET;
+    servaddr.sin_addr.s_addr = INADDR_ANY;
+    servaddr.sin_port = htons(PORT);
+
+    if (bind(sockfd, (const struct sockaddr *)&servaddr, sizeof(servaddr)) < 0) {
+        perror("Bind failed");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Unified ARQ Receiver active on port %d...\n", PORT);
+
+    while (1) {
+        len = sizeof(cliaddr);
+        int n = recvfrom(sockfd, &recv_frame, sizeof(recv_frame), 0, (struct sockaddr *)&cliaddr, &len);
+        if (n < 0) continue;
+
+        // Check command header for test simulations
+        if (recv_frame.command == 2) {
+            printf("\n[Test Simulation] Intentionally dropping Frame %d to test Timeout & Retransmission!\n", recv_frame.seq_no);
+            continue; // Skip sending ACK, forcing sender timeout
+        }
+
+        printf("\n[Received] Frame Seq No: %d | Data: %s\n", recv_frame.seq_no, recv_frame.data);
+
+        if (recv_frame.seq_no == expected_seq) {
+            printf("[Action] Valid frame. Delivering data.\n");
+            expected_seq = (expected_seq + 1) % 2;
+        } else {
+            printf("[Action] Duplicate frame detected (Expected %d, got %d). Discarding data.\n", expected_seq, recv_frame.seq_no);
+        }
+
+        send_frame.ack_no = expected_seq;
+        sendto(sockfd, &send_frame, sizeof(send_frame), 0, (struct sockaddr *)&cliaddr, len);
+        printf("[Sent] ACK %d\n", send_frame.ack_no);
+    }
+
+    close(sockfd);
+    return 0;
+}
+raghul@Raghul:~/SEM5/CN/EXP8$ cat cirsend.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/time.h>
+
+#define PORT 8085
+#define BUFFER_SIZE 1024
+#define TIMEOUT_SEC 3
+#define QUEUE_SIZE 10
+
+struct Frame {
+    int seq_no;
+    int ack_no;
+    int command;
+    char data[BUFFER_SIZE];
+};
+
+// Circular Queue structure for buffering messages
+struct CircularQueue {
+    char items[QUEUE_SIZE][BUFFER_SIZE];
+    int front;
+    int rear;
+    int count;
+};
+
+void initQueue(struct CircularQueue *q) {
+    q->front = 0;
+    q->rear = -1;
+    q->count = 0;
+}
+
+int isFull(struct CircularQueue *q) {
+    return q->count == QUEUE_SIZE;
+}
+
+int isEmpty(struct CircularQueue *q) {
+    return q->count == 0;
+}
+
+void enqueue(struct CircularQueue *q, char *data) {
+    if (isFull(q)) {
+        printf("[Queue] Warning: Message queue is full!\n");
+        return;
+    }
+    q->rear = (q->rear + 1) % QUEUE_SIZE;
+    strcpy(q->items[q->rear], data);
+    q->count++;
+}
+
+void dequeue(struct CircularQueue *q, char *data) {
+    if (isEmpty(q)) return;
+    strcpy(data, q->items[q->front]);
+    q->front = (q->front + 1) % QUEUE_SIZE;
+    q->count--;
+}
+
+int main() {
+    int sockfd;
+    struct sockaddr_in servaddr;
+    struct Frame frame, ack_frame;
+    socklen_t len;
+    int send_seq = 0;
+    char input[BUFFER_SIZE];
+    int choice;
+    struct CircularQueue messageQueue;
+
+    initQueue(&messageQueue);
+
+    if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+        perror("Socket creation failed");
+        exit(EXIT_FAILURE);
+    }
+
+    struct timeval tv;
+    tv.tv_sec = TIMEOUT_SEC;
+    tv.tv_usec = 0;
+    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    memset(&servaddr, 0, sizeof(servaddr));
+    servaddr.sin_family = AF_INET;
+    servaddr.sin_port = htons(PORT);
+    servaddr.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+    printf("\n===========================================\n");
+    printf("       Stop-and-Wait ARQ Test Menu         \n");
+    printf("===========================================\n");
+    printf("1. Normal Transmission (Happy Path / Seq Toggle)\n");
+    printf("2. Test Timeout & Retransmission (Drop Frame)\n");
+    printf("3. Test Duplicate Frame Handling (Manual Resend)\n");
+    printf("Select test case option: ");
+
+    if (scanf("%d", &choice) != 1) {
+        close(sockfd);
+        exit(0);
+    }
+    getchar(); // Clear trailing newline
+
+    while (1) {
+        printf("\nEnter data message (or type 'exit' to quit): ");
+        if (fgets(input, sizeof(input), stdin) == NULL) break;
+        input[strcspn(input, "\n")] = 0;
+
+        if (strcmp(input, "exit") == 0) break;
+
+        // Enqueue the message into the circular queue
+        enqueue(&messageQueue, input);
+
+        // Process message from circular queue using Stop-and-Wait ARQ
+        while (!isEmpty(&messageQueue)) {
+            char current_msg[BUFFER_SIZE];
+            dequeue(&messageQueue, current_msg);
+
+            strcpy(frame.data, current_msg);
+            frame.seq_no = send_seq;
+            frame.command = (choice == 2) ? 2 : 0;
+
+            int acknowledged = 0;
+            while (!acknowledged) {
+                len = sizeof(servaddr);
+                printf("[Timer Started] Sending Frame %d (Seq: %d)...\n", send_seq, frame.seq_no);
+                sendto(sockfd, &frame, sizeof(frame), 0, (const struct sockaddr *)&servaddr, len);
+
+                len = sizeof(servaddr);
+                int n = recvfrom(sockfd, &ack_frame, sizeof(ack_frame), 0, (struct sockaddr *)&servaddr, &len);
+
+                if (n < 0) {
+                    printf("[Timeout Expired!] No ACK received. Resending Frame %d...\n", send_seq);
+                    frame.command = 0; // Clear drop flag for subsequent retransmissions
+                } else {
+                    if (ack_frame.ack_no == (send_seq + 1) % 2) {
+                        printf("[Timer Stopped] Valid ACK %d received.\n", ack_frame.ack_no);
+                        send_seq = (send_seq + 1) % 2; // Toggle sequence number
+                        acknowledged = 1;
+                    } else {
+                        printf("[Error] Unexpected ACK received. Retransmitting...\n");
+                    }
+                }
+            }
+
+            // Option 3: Clean manual duplicate injection prompt
+            if (choice == 3) {
+                char duplicate_choice;
+                printf("Do you want to manually re-send this frame as a duplicate to test receiver detection? (y/n): ");
+                scanf(" %c", &duplicate_choice);
+                getchar(); // Clear newline
+
+                if (duplicate_choice == 'y' || duplicate_choice == 'Y') {
+                    int old_seq = (send_seq + 1) % 2;
+                    printf("[Action] Manually re-sending Frame with old Seq: %d...\n", old_seq);
+                    frame.seq_no = old_seq;
+                    frame.command = 0;
+
+                    len = sizeof(servaddr);
+                    sendto(sockfd, &frame, sizeof(frame), 0, (const struct sockaddr *)&servaddr, len);
+
+                    len = sizeof(servaddr);
+                    recvfrom(sockfd, &ack_frame, sizeof(ack_frame), 0, (struct sockaddr *)&servaddr, &len);
+                    printf("[Info] Received ACK %d back.\n", ack_frame.ack_no);
+
+                    frame.seq_no = send_seq;
+                }
+            }
+        }
+    }
+
+    close(sockfd);
+    return 0;
+}
+
+
+--------------------------------------------------------------------------------------------
+Output:
+
+Terminal 1:
+
+gcc Cirrecv.c -o Cirrecv
+./Cirrecv
+
+Terminal 2:
+gcc Cirsend.c -o Cirsend
+./Cirsend
+
+
+Outputs for the 3 Test Cases
+
+Case 1: Normal Transmission
+The sender transmits messages; the sequence number alternates between 0 and 1.
+
+Terminal 2 (Sender — Cirsend.c):
+
+===========================================
+       Stop-and-Wait ARQ Test Menu
+===========================================
+1. Normal Transmission (Happy Path / Seq Toggle)
+2. Test Timeout & Retransmission (Drop Frame)
+3. Test Duplicate Frame Handling (Manual Resend)
+
+Select test case option: 1
+Enter data message (or type 'exit' to quit): Hello
+[Timer Started] Sending Frame 0 (Seq: 0)...
+[Timer Stopped] Valid ACK 1 received.
+Enter data message (or type 'exit' to quit): World
+[Timer Started] Sending Frame 1 (Seq: 1)...
+[Timer Stopped] Valid ACK 0 received.
+Enter data message (or type 'exit' to quit): exit
+
+Terminal 1 (Receiver — Cirrecv.c):
+
+Unified ARQ Receiver active on port 8085...
+[Received] Frame Seq No: 0 | Data: Hello
+[Action] Valid frame. Delivering data.
+[Sent] ACK 1
+[Received] Frame Seq No: 1 | Data: World
+[Action] Valid frame. Delivering data.
+[Sent] ACK 0
+
+
+Case 2: Timeout & Retransmission
+
+Receiver deliberately drops the first transmission to simulate packet loss. After 3 seconds, the sender times out and retransmits.
+
+Terminal 2 (Sender — Cirsend.c):
+
+===========================================
+       Stop-and-Wait ARQ Test Menu
+===========================================
+1. Normal Transmission (Happy Path / Seq Toggle)
+2. Test Timeout & Retransmission (Drop Frame)
+3. Test Duplicate Frame Handling (Manual Resend)
+Select test case option: 2
+Enter data message (or type 'exit' to quit): TestPacket
+[Timer Started] Sending Frame 0 (Seq: 0)...
+[Timeout Expired!] No ACK received. Resending Frame 0...
+[Timer Started] Sending Frame 0 (Seq: 0)...
+[Timer Stopped] Valid ACK 1 received.
+Enter data message (or type 'exit' to quit): exit
+
+Terminal 1 (Receiver — Cirrecv.c):
+
+Unified ARQ Receiver active on port 8085...
+[Test Simulation] Intentionally dropping Frame 0 to test Timeout & Retransmission!
+[Received] Frame Seq No: 0 | Data: TestPacket
+[Action] Valid frame. Delivering data.
+[Sent] ACK 1
+
+
+Case 3: Duplicate Frame Detection (Option 3)
+The sender manually re-sends the already acknowledged frame. The receiver detects the duplicate sequence number, discards the data, and re-sends the ACK.
+
+Terminal 2 (Sender — Cirsend.c):
+
+===========================================
+       Stop-and-Wait ARQ Test Menu
+===========================================
+1. Normal Transmission (Happy Path / Seq Toggle)
+2. Test Timeout & Retransmission (Drop Frame)
+3. Test Duplicate Frame Handling (Manual Resend)
+Select test case option: 3
+Enter data message (or type 'exit' to quit): MyData
+[Timer Started] Sending Frame 0 (Seq: 0)...
+[Timer Stopped] Valid ACK 1 received.
+Do you want to manually re-send this frame as a duplicate to test receiver detection? (y/n): y
+[Action] Manually re-sending Frame with old Seq: 0...
+[Info] Received ACK 1 back.
+Enter data message (or type 'exit' to quit): exit
+
+Terminal 1 (Receiver — Cirrecv.c):
+
+Unified ARQ Receiver active on port 8085...
+[Received] Frame Seq No: 0 | Data: MyData
+[Action] Valid frame. Delivering data.
+[Sent] ACK 1
+[Received] Frame Seq No: 0 | Data: MyData
+[Action] Duplicate frame detected (Expected 1, got 0). Discarding data.
+[Sent] ACK 1
+
+========================================================================================================
+
+Question - 2:
+
+raghul@Raghul:~/SEM5/CN/EXP8$ cat duprecv.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+
+#define PORT 8085
+#define BUFFER_SIZE 1024
+#define MAX_SEQ 16
+#define WINDOW_SIZE 8
+
+struct Frame {
+    int seq_no;
+    int command;
+    char data[BUFFER_SIZE];
+};
+
+struct Ack {
+    int ack_no;
+};
+
+int main() {
+    int sockfd;
+    struct sockaddr_in servaddr, cliaddr;
+    socklen_t len;
+    struct Frame recv_frame;
+    struct Ack ack_frame;
+    int recv_window[MAX_SEQ] = {0};
+    char circular_buffer[MAX_SEQ][BUFFER_SIZE];
+    int Rn = 0;
+
+    if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+        perror("Socket creation failed");
+        exit(EXIT_FAILURE);
+    }
+
+    memset(&servaddr, 0, sizeof(servaddr));
+    memset(&cliaddr, 0, sizeof(cliaddr));
+    servaddr.sin_family = AF_INET;
+    servaddr.sin_addr.s_addr = INADDR_ANY;
+    servaddr.sin_port = htons(PORT);
+
+    if (bind(sockfd, (const struct sockaddr *)&servaddr, sizeof(servaddr)) < 0) {
+        perror("Bind failed");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Selective Repeat Duplicate-Test Receiver active on port %d...\n", PORT);
+
+    while (1) {
+        memset(&recv_frame, 0, sizeof(recv_frame));
+        len = sizeof(cliaddr);
+        int n = recvfrom(sockfd, &recv_frame, sizeof(recv_frame), 0, (struct sockaddr *)&cliaddr, &len);
+        if (n < 0) continue;
+
+        if (recv_frame.command == 2) {
+            printf("\n[Test Simulation] Intentionally dropping Frame %d!\n", recv_frame.seq_no);
+            continue;
+        }
+
+        int seq = recv_frame.seq_no;
+        printf("\n[Received] Frame Seq: %d | Data: %s\n", seq, recv_frame.data);
+
+        int in_window = 0;
+        for (int i = 0; i < WINDOW_SIZE; i++) {
+            if ((Rn + i) % MAX_SEQ == seq) {
+                in_window = 1;
+                break;
+            }
+        }
+
+        memset(&ack_frame, 0, sizeof(ack_frame));
+        if (in_window) {
+            if (recv_window[seq]) {
+                printf("[Action] Duplicate frame %d detected. Discarding duplicate data and re-sending ACK.\n", seq);
+            } else {
+                recv_window[seq] = 1;
+                strcpy(circular_buffer[seq], recv_frame.data);
+                printf("[Action] Frame %d buffered in circular slot.\n", seq);
+            }
+
+            ack_frame.ack_no = seq;
+            sendto(sockfd, &ack_frame, sizeof(ack_frame), 0, (struct sockaddr *)&cliaddr, len);
+            printf("[Sent] ACK for Frame %d\n", seq);
+
+            while (recv_window[Rn]) {
+                printf("[Window Slide] Delivering Frame %d: %s\n", Rn, circular_buffer[Rn]);
+                recv_window[Rn] = 0;
+                Rn = (Rn + 1) % MAX_SEQ;
+            }
+        } else {
+            // Also handle older already-delivered frames falling behind Rn as duplicates
+            ack_frame.ack_no = seq;
+            sendto(sockfd, &ack_frame, sizeof(ack_frame), 0, (struct sockaddr *)&cliaddr, len);
+            printf("[Action] Out-of-range or old frame %d. Re-sending ACK.\n", seq);
+        }
+    }
+    close(sockfd);
+    return 0;
+}
+raghul@Raghul:~/SEM5/CN/EXP8$ cat dupsend.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/time.h>
+#include <time.h>
+#include <fcntl.h>
+
+#define PORT 8085
+#define BUFFER_SIZE 1024
+#define MAX_SEQ 16
+#define WINDOW_SIZE 3
+#define TIMEOUT_SEC 3
+
+struct Frame {
+    int seq_no;
+    int command;
+    char data[BUFFER_SIZE];
+};
+
+struct Ack {
+    int ack_no;
+};
+
+int main() {
+    int sockfd;
+    struct sockaddr_in servaddr, from_addr;
+    socklen_t len, from_len;
+
+    int Sf = 0;
+    int Sn = 0;
+    int choice = 0;
+
+    struct Frame window_frames[MAX_SEQ];
+    int window_acks[MAX_SEQ];
+    time_t timer_start[MAX_SEQ];
+
+    for(int i = 0; i < MAX_SEQ; i++) {
+        memset(&window_frames[i], 0, sizeof(struct Frame));
+        window_acks[i] = 0;
+        timer_start[i] = 0;
+    }
+
+    if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+        perror("Socket creation failed");
+        exit(EXIT_FAILURE);
+    }
+
+    struct timeval tv;
+    tv.tv_sec = 1;
+    tv.tv_usec = 0;
+    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    memset(&servaddr, 0, sizeof(servaddr));
+    servaddr.sin_family = AF_INET;
+    servaddr.sin_port = htons(PORT);
+    servaddr.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+    printf("\n===========================================\n");
+    printf("     Selective Repeat ARQ Test Menu        \n");
+    printf("===========================================\n");
+    printf("1. Normal Transmission\n");
+    printf("2. Test Timeout & Retransmission (Drop Frame 0)\n");
+    printf("3. Test Duplicate Frame Handling (Manual Resend)\n");
+    printf("Select test case option: ");
+    if (scanf("%d", &choice) != 1) choice = 1;
+    getchar(); // Clear trailing newline
+
+    int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
+    fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
+
+    printf("Selective Repeat Sender Active. Type messages:\n> ");
+    fflush(stdout);
+
+    while (1) {
+        if (((Sn - Sf + MAX_SEQ) % MAX_SEQ) < WINDOW_SIZE) {
+            char input[BUFFER_SIZE];
+            if (fgets(input, sizeof(input), stdin) != NULL) {
+                input[strcspn(input, "\n")] = 0;
+                if (strlen(input) > 0) {
+                    int current_sent_seq = Sn;
+                    window_frames[current_sent_seq].seq_no = current_sent_seq;
+                    window_frames[current_sent_seq].command = (choice == 2 && current_sent_seq == 0) ? 2 : 0;
+                    strcpy(window_frames[current_sent_seq].data, input);
+                    window_acks[current_sent_seq] = 0;
+                    timer_start[current_sent_seq] = time(NULL);
+
+                    len = sizeof(servaddr);
+                    sendto(sockfd, &window_frames[current_sent_seq], sizeof(window_frames[current_sent_seq]), 0, (const struct sockaddr *)&servaddr, len);
+                    printf("[Sent] Frame %d: %s\n> ", current_sent_seq, input);
+                    fflush(stdout);
+
+                    Sn = (Sn + 1) % MAX_SEQ;
+
+                    // Option 3: Prompt to inject a duplicate transmission test
+                    if (choice == 3) {
+                        char dup_choice;
+                        printf("Manually re-send Frame %d as duplicate? (y/n): ", current_sent_seq);
+                        fflush(stdout);
+
+                        // Temporarily block to capture user decision for duplicate test
+                        int flags_stdin = fcntl(STDIN_FILENO, F_GETFL, 0);
+                        fcntl(STDIN_FILENO, F_SETFL, flags_stdin & ~O_NONBLOCK);
+
+                        if (scanf(" %c", &dup_choice) == 1 && (dup_choice == 'y' || dup_choice == 'Y')) {
+                            printf("[Action] Forcing duplicate transmission of Frame %d...\n> ", current_sent_seq);
+                            sendto(sockfd, &window_frames[current_sent_seq], sizeof(window_frames[current_sent_seq]), 0, (const struct sockaddr *)&servaddr, len);
+                        }
+                        getchar(); // Clear newline
+                        fcntl(STDIN_FILENO, F_SETFL, flags_stdin); // Restore non-blocking
+                    }
+                }
+            }
+        }
+
+        struct Ack ack_frame;
+        memset(&ack_frame, 0, sizeof(ack_frame));
+        from_len = sizeof(from_addr);
+        int n = recvfrom(sockfd, &ack_frame, sizeof(ack_frame), 0, (struct sockaddr *)&from_addr, &from_len);
+
+        if (n == sizeof(struct Ack)) {
+            int ack_seq = ack_frame.ack_no;
+            if (ack_seq >= 0 && ack_seq < MAX_SEQ) {
+                printf("\n[Received] ACK for Frame %d\n> ", ack_seq);
+                fflush(stdout);
+
+                window_acks[ack_seq] = 1;
+
+                while (window_acks[Sf]) {
+                    window_acks[Sf] = 0;
+                    Sf = (Sf + 1) % MAX_SEQ;
+                    printf("[Window Slide] Circular Base advanced to %d.\n> ", Sf);
+                    fflush(stdout);
+                }
+            }
+        }
+
+        time_t current_time = time(NULL);
+        int count = (Sn - Sf + MAX_SEQ) % MAX_SEQ;
+        for (int i = 0; i < count; i++) {
+            int current_seq = (Sf + i) % MAX_SEQ;
+            if (!window_acks[current_seq]) {
+                if (current_time - timer_start[current_seq] >= TIMEOUT_SEC) {
+                    printf("\n[Timeout Expired!] Retransmitting Frame %d alone.\n> ", current_seq);
+                    fflush(stdout);
+
+                    window_frames[current_seq].command = 0;
+                    len = sizeof(servaddr);
+                    sendto(sockfd, &window_frames[current_seq], sizeof(window_frames[current_seq]), 0, (const struct sockaddr *)&servaddr, len);
+                    timer_start[current_seq] = time(NULL);
+                }
+            }
+        }
+        usleep(100000);
+    }
+    close(sockfd);
+    return 0;
+}
+
+--------------------------------------------------------------------------------------------------
+
+Output:
+
+Terminal 1: Start Receiver
+gcc duprecv.c -o duprecv
+./duprecv
+
+Terminal 2: Start Sender
+gcc dupsend.c -o dupsend
+./dupsend
+
+Case 1: Normal Transmission
+The sender transmits frames across the sliding window (WINDOW_SIZE = 3), receiving individual ACKs and sliding the window forward.
+
+Terminal 2 (Sender — dupsend.c):
+
+===========================================
+     Selective Repeat ARQ Test Menu
+===========================================
+1. Normal Transmission
+2. Test Timeout & Retransmission (Drop Frame 0)
+3. Test Duplicate Frame Handling (Manual Resend)
+Select test case option: 1
+Selective Repeat Sender Active. Type messages:
+> MessageA
+[Sent] Frame 0: MessageA
+>
+[Received] ACK for Frame 0
+> [Window Slide] Circular Base advanced to 1.
+> MessageB
+[Sent] Frame 1: MessageB
+>
+[Received] ACK for Frame 1
+> [Window Slide] Circular Base advanced to 2.
+>
+
+
+Terminal 1 (Receiver — duprecv.c):
+
+Selective Repeat Duplicate-Test Receiver active on port 8085...
+[Received] Frame Seq: 0 | Data: MessageA
+[Action] Frame 0 buffered in circular slot.
+[Sent] ACK for Frame 0
+[Window Slide] Delivering Frame 0: MessageA
+[Received] Frame Seq: 1 | Data: MessageB
+[Action] Frame 1 buffered in circular slot.
+[Sent] ACK for Frame 1
+[Window Slide] Delivering Frame 1: MessageB
+Case 2: Timeout & Retransmission (Option 2)
+The receiver intentionally drops Frame 0 (command = 2). The sender's 3-second timer expires, and it retransmits Frame 0 alone (Selective Repeat) rather than retransmitting all frames.
+
+Terminal 2 (Sender — dupsend.c):
+
+===========================================
+     Selective Repeat ARQ Test Menu
+===========================================
+1. Normal Transmission
+2. Test Timeout & Retransmission (Drop Frame 0)
+3. Test Duplicate Frame Handling (Manual Resend)
+Select test case option: 2
+Selective Repeat Sender Active. Type messages:
+> LostPacket
+[Sent] Frame 0: LostPacket
+>
+[Timeout Expired!] Retransmitting Frame 0 alone.
+>
+[Received] ACK for Frame 0
+> [Window Slide] Circular Base advanced to 1.
+>
+
+Terminal 1 (Receiver — duprecv.c):
+
+Selective Repeat Duplicate-Test Receiver active on port 8085...
+[Test Simulation] Intentionally dropping Frame 0!
+[Received] Frame Seq: 0 | Data: LostPacket
+[Action] Frame 0 buffered in circular slot.
+[Sent] ACK for Frame 0
+[Window Slide] Delivering Frame 0: LostPacket
+Case 3: Duplicate Frame Handling (Option 3)
+The sender transmits Frame 0, prompts the user to manually re-send it, and transmits it again. The receiver recognises that Frame 0 has already been delivered, re-sends the ACK, and ignores the payload.
+
+Terminal 2 (Sender — dupsend.c):
+
+===========================================
+     Selective Repeat ARQ Test Menu
+===========================================
+1. Normal Transmission
+2. Test Timeout & Retransmission (Drop Frame 0)
+3. Test Duplicate Frame Handling (Manual Resend)
+Select test case option: 3
+Selective Repeat Sender Active. Type messages:
+> DuplicateMsg
+[Sent] Frame 0: DuplicateMsg
+> Manually re-send Frame 0 as duplicate? (y/n): y
+[Action] Forcing duplicate transmission of Frame 0...
+>
+[Received] ACK for Frame 0
+> [Window Slide] Circular Base advanced to 1.
+>
+[Received] ACK for Frame 0
+>
+
+Terminal 1 (Receiver — duprecv.c):
+
+Selective Repeat Duplicate-Test Receiver active on port 8085...
+[Received] Frame Seq: 0 | Data: DuplicateMsg
+[Action] Frame 0 buffered in circular slot.
+[Sent] ACK for Frame 0
+[Window Slide] Delivering Frame 0: DuplicateMsg
+[Received] Frame Seq: 0 | Data: DuplicateMsg
+[Action] Out-of-range or old frame 0. Re-sending ACK.
